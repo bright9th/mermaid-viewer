@@ -6,6 +6,7 @@
   import HelpOverlay from "./lib/HelpOverlay.svelte";
   import TopBar from "./lib/TopBar.svelte";
   import type { EdgeRecord, GraphData, NodeRecord } from "./lib/types";
+  import dagre from "@dagrejs/dagre";
 
   const initialMarkdown = `flowchart LR
     A[Start] --> B[Plan]
@@ -151,10 +152,11 @@
       node.parentId = incoming[0];
     }
 
-    layoutGraph(
-      nodeList,
-      nodeList.map((node) => node.id),
-    );
+    const directionMatch = source.match(/(?:flowchart|graph)\s+(LR|RL|TB|BT)/i);
+
+    const direction = directionMatch?.[1] ?? "TB";
+
+    layoutGraph(nodeList, edges, direction);
     return { nodes: nodeList, edges };
   }
 
@@ -191,47 +193,44 @@
     }
   }
 
-  function layoutGraph(nodes: NodeRecord[], rootIds: string[]) {
-    const nodeById = new Map(nodes.map((node) => [node.id, node]));
-    const roots = rootIds.filter((id) => !nodeById.get(id)?.parentId);
-    const rootList = roots.length ? roots : rootIds;
+  function layoutGraph(
+    nodes: NodeRecord[],
+    edges: EdgeRecord[],
+    direction: string,
+  ) {
+    const g = new dagre.graphlib.Graph();
 
-    const placeNode = (node: NodeRecord, depth: number, y: number) => {
-      node.x = depth * 240 + 260;
-      node.y = y;
-
-      if (!node.children.length) {
-        return;
-      }
-
-      const childSpacing = 190;
-      const startY = y - ((node.children.length - 1) * childSpacing) / 2;
-      node.children.forEach((childId, index) => {
-        const child = nodeById.get(childId);
-        if (!child) {
-          return;
-        }
-        placeNode(child, depth + 1, startY + index * childSpacing);
-      });
-    };
-
-    if (!nodes.length) {
-      return;
-    }
-
-    const startY = 220;
-    const verticalGap = 220;
-    rootList.forEach((id, index) => {
-      const rootNode = nodeById.get(id);
-      if (!rootNode) {
-        return;
-      }
-      placeNode(rootNode, 1, startY + index * verticalGap);
+    g.setGraph({
+      rankdir: direction,
+      ranksep: 120,
+      nodesep: 60,
+      marginx: 80,
+      marginy: 80,
     });
 
-    const firstNode = nodes[0];
-    firstNode.x = 260;
-    firstNode.y = 220;
+    g.setDefaultEdgeLabel(() => ({}));
+
+    for (const node of nodes) {
+      g.setNode(node.id, {
+        width: 148,
+        height: 68,
+      });
+    }
+
+    for (const edge of edges) {
+      g.setEdge(edge.from, edge.to);
+    }
+
+    dagre.layout(g);
+
+    for (const node of nodes) {
+      const pos = g.node(node.id);
+
+      if (!pos) continue;
+
+      node.x = pos.x;
+      node.y = pos.y;
+    }
   }
 
   function getVisibleNodeIds(): string[] {
