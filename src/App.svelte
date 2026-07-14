@@ -82,6 +82,41 @@
     return hasMermaidSyntax ? normalized : null;
   }
 
+  const edgeRegex =
+    /^(.+?)\s*(-{3}|-->|={3}|==>|-\.-|-\.->)(?:\|([^|]+)\|)?\s*(.+)$/;
+
+  function parseEdge(line: string): {
+    from: { id: string; label: string };
+    to: { id: string; label: string };
+    edge: EdgeRecord;
+  } | null {
+    const match = line.match(edgeRegex);
+
+    if (!match) return null;
+
+    const [, fromToken, syntax, label, toToken] = match;
+
+    const from = parseNodeToken(fromToken.trim());
+    const to = parseNodeToken(toToken.trim());
+
+    if (!from || !to) return null;
+
+    const edge = {
+      from: from.id,
+      to: to.id,
+      label: label?.trim(),
+      arrow: syntax.endsWith(">"),
+      type: (syntax.startsWith("=")
+        ? "thick"
+        : syntax.includes(".")
+          ? "dotted"
+          : "normal") as "thick" | "dotted" | "normal",
+      points: [],
+    };
+
+    return { from, to, edge };
+  }
+
   function parseMermaid(source: string): GraphData {
     const nodes = new Map<string, NodeRecord>();
     const edges: EdgeRecord[] = [];
@@ -101,25 +136,18 @@
         continue;
       }
 
-      const cleaned = line.replace(/\|[^|]+\|/g, "").trim();
-      const edgeParts = cleaned.split(/\s*-->/).map((part) => part.trim());
+      const parsedEdge = parseEdge(line);
 
-      if (edgeParts.length > 1) {
-        const parsedParts = edgeParts
-          .map((token) => parseNodeToken(token))
-          .filter((entry): entry is { id: string; label: string } => !!entry);
+      if (parsedEdge) {
+        ensureNode(nodes, parsedEdge.from.id, parsedEdge.from.label);
+        ensureNode(nodes, parsedEdge.to.id, parsedEdge.to.label);
 
-        for (let index = 0; index < parsedParts.length - 1; index += 1) {
-          const from = parsedParts[index];
-          const to = parsedParts[index + 1];
-          ensureNode(nodes, from.id, from.label);
-          ensureNode(nodes, to.id, to.label);
-          edges.push({ from: from.id, to: to.id });
-        }
+        edges.push(parsedEdge.edge);
+
         continue;
       }
 
-      const single = parseNodeToken(cleaned);
+      const single = parseNodeToken(line);
       if (single) {
         ensureNode(nodes, single.id, single.label);
       }
@@ -230,6 +258,14 @@
 
       node.x = pos.x;
       node.y = pos.y;
+    }
+
+    for (const edge of edges) {
+      const layout = g.edge(edge.from, edge.to);
+
+      if (!layout) continue;
+
+      edge.points = layout.points;
     }
   }
 
@@ -481,8 +517,24 @@
   }
 
   function zoomBy(delta: number) {
-    const nextScale = Math.min(2.6, Math.max(0.6, viewTarget.scale + delta));
-    viewTarget = { ...viewTarget, scale: nextScale };
+    const oldScale = viewTarget.scale;
+    const newScale = Math.min(2.6, Math.max(0.6, oldScale + delta));
+
+    if (oldScale === newScale) return;
+
+    const cx = fieldSize.width / 2;
+    const cy = fieldSize.height / 2;
+
+    // World position currently under the screen center
+    const worldX = (cx - viewTarget.x) / oldScale;
+    const worldY = (cy - viewTarget.y) / oldScale;
+
+    viewTarget = {
+      scale: newScale,
+      x: cx - worldX * newScale,
+      y: cy - worldY * newScale,
+    };
+
     beginAnimation();
   }
 
@@ -714,10 +766,10 @@
         y: viewTarget.y + event.deltaX * 0.45,
         scale: viewTarget.scale,
       };
+      beginAnimation();
     } else {
       zoomBy(event.deltaY > 0 ? -0.08 : 0.08);
     }
-    beginAnimation();
   }
 
   function startDrag(event: PointerEvent) {
@@ -804,6 +856,8 @@
       if (event.key === "Enter") {
         event.preventDefault();
         jumpToSearch();
+        const target = event.target as HTMLElement | null;
+        target?.blur();
       }
     }}
     onEditClick={beginEditing}

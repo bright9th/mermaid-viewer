@@ -8,10 +8,14 @@ export type NodeRecord = {
   neighbors: string[];
 };
 
-export type EdgeRecord = {
+export interface EdgeRecord {
   from: string;
   to: string;
-};
+  type: "normal" | "thick" | "dotted";
+  label?: string;
+  arrow: boolean;
+  points: { x: number; y: number }[];
+}
 
 export type GraphData = {
   nodes: NodeRecord[];

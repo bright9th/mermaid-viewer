@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { GraphData } from "./types";
+  import type { EdgeRecord, GraphData, NodeRecord } from "./types";
 
   export let graph: GraphData;
   export let visibleGraph: GraphData;
@@ -13,6 +13,46 @@
   export let onViewportPointerUp: () => void;
   export let onViewportPointerLeave: () => void;
   export let onWheel: (event: WheelEvent) => void;
+
+  const NODE_WIDTH = 148;
+  const NODE_HEIGHT = 68;
+
+  //   function edgePath(from: NodeRecord, to: NodeRecord) {
+  //     const startX = from.x + NODE_WIDTH / 2;
+  //     const startY = from.y;
+  //     const endX = to.x - NODE_WIDTH / 2;
+  //     const endY = to.y;
+  //     const dx = (endX - startX) * 0.5;
+  //     return `
+  // M ${startX} ${startY}
+  // C ${startX + dx} ${startY},
+  //   ${endX - dx} ${endY},
+  //   ${endX} ${endY}
+  // `;
+  //   }
+
+  function edgePath(edge: EdgeRecord) {
+    const pts = edge.points;
+
+    if (!pts?.length) return "";
+
+    let d = `M ${pts[0].x} ${pts[0].y}`;
+
+    for (let i = 1; i < pts.length - 1; i++) {
+      const p = pts[i];
+      const next = pts[i + 1];
+
+      const cx = (p.x + next.x) / 2;
+      const cy = (p.y + next.y) / 2;
+
+      d += ` Q ${p.x} ${p.y} ${cx} ${cy}`;
+    }
+
+    const last = pts[pts.length - 1];
+    d += ` T ${last.x} ${last.y}`;
+
+    return d;
+  }
 </script>
 
 <div
@@ -36,23 +76,17 @@
     />
     <g transform={`translate(${view.x} ${view.y}) scale(${view.scale})`}>
       {#each visibleGraph.edges as edge (edge.from + "-" + edge.to)}
-        {@const fromNode = graph.nodes.find((entry) => entry.id === edge.from)}
+        <!-- {@const fromNode = graph.nodes.find((entry) => entry.id === edge.from)}
         {@const toNode = graph.nodes.find((entry) => entry.id === edge.to)}
-        {#if fromNode && toNode}
-          <line
-            x1={fromNode.x}
-            y1={fromNode.y}
-            x2={toNode.x}
-            y2={toNode.y}
-            class="edge"
-          />
-          <circle
+        {#if fromNode && toNode} -->
+        <path d={edgePath(edge)} class="edge" />
+        <!-- <circle
             cx={(fromNode.x + toNode.x) / 2}
             cy={(fromNode.y + toNode.y) / 2}
             r="5"
             fill="#7dd3fc"
-          />
-        {/if}
+          /> -->
+        <!-- {/if} -->
       {/each}
 
       {#each visibleGraph.nodes as node (node.id)}
@@ -116,6 +150,7 @@
     stroke-width: 3;
     stroke-linecap: round;
     marker-end: url(#arrowhead);
+    fill: none;
   }
 
   .node {
