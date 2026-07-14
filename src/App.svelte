@@ -6,6 +6,7 @@
   import HelpOverlay from "./lib/HelpOverlay.svelte";
   import TopBar from "./lib/TopBar.svelte";
   import type { EdgeRecord, GraphData, NodeRecord } from "./lib/types";
+  import dagre from "@dagrejs/dagre";
 
   const initialMarkdown = `flowchart LR
     A[Start] --> B[Plan]
@@ -45,7 +46,7 @@
   } | null = null;
 
   const fieldSize = { width: 1400, height: 900 };
-  const moveScale = 140;
+  const moveScale = 20;
 
   function extractMermaidSource(source: string): string | null {
     const normalized = source.replace(/\r\n/g, "\n");
@@ -81,6 +82,41 @@
     return hasMermaidSyntax ? normalized : null;
   }
 
+  const edgeRegex =
+    /^(.+?)\s*(-{3}|-->|={3}|==>|-\.-|-\.->)(?:\|([^|]+)\|)?\s*(.+)$/;
+
+  function parseEdge(line: string): {
+    from: { id: string; label: string };
+    to: { id: string; label: string };
+    edge: EdgeRecord;
+  } | null {
+    const match = line.match(edgeRegex);
+
+    if (!match) return null;
+
+    const [, fromToken, syntax, label, toToken] = match;
+
+    const from = parseNodeToken(fromToken.trim());
+    const to = parseNodeToken(toToken.trim());
+
+    if (!from || !to) return null;
+
+    const edge = {
+      from: from.id,
+      to: to.id,
+      label: label?.trim(),
+      arrow: syntax.endsWith(">"),
+      type: (syntax.startsWith("=")
+        ? "thick"
+        : syntax.includes(".")
+          ? "dotted"
+          : "normal") as "thick" | "dotted" | "normal",
+      points: [],
+    };
+
+    return { from, to, edge };
+  }
+
   function parseMermaid(source: string): GraphData {
     const nodes = new Map<string, NodeRecord>();
     const edges: EdgeRecord[] = [];
@@ -100,25 +136,18 @@
         continue;
       }
 
-      const cleaned = line.replace(/\|[^|]+\|/g, "").trim();
-      const edgeParts = cleaned.split(/\s*-->/).map((part) => part.trim());
+      const parsedEdge = parseEdge(line);
 
-      if (edgeParts.length > 1) {
-        const parsedParts = edgeParts
-          .map((token) => parseNodeToken(token))
-          .filter((entry): entry is { id: string; label: string } => !!entry);
+      if (parsedEdge) {
+        ensureNode(nodes, parsedEdge.from.id, parsedEdge.from.label);
+        ensureNode(nodes, parsedEdge.to.id, parsedEdge.to.label);
 
-        for (let index = 0; index < parsedParts.length - 1; index += 1) {
-          const from = parsedParts[index];
-          const to = parsedParts[index + 1];
-          ensureNode(nodes, from.id, from.label);
-          ensureNode(nodes, to.id, to.label);
-          edges.push({ from: from.id, to: to.id });
-        }
+        edges.push(parsedEdge.edge);
+
         continue;
       }
 
-      const single = parseNodeToken(cleaned);
+      const single = parseNodeToken(line);
       if (single) {
         ensureNode(nodes, single.id, single.label);
       }
@@ -151,10 +180,11 @@
       node.parentId = incoming[0];
     }
 
-    layoutGraph(
-      nodeList,
-      nodeList.map((node) => node.id),
-    );
+    const directionMatch = source.match(/(?:flowchart|graph)\s+(LR|RL|TB|BT)/i);
+
+    const direction = directionMatch?.[1] ?? "TB";
+
+    layoutGraph(nodeList, edges, direction);
     return { nodes: nodeList, edges };
   }
 
@@ -191,47 +221,52 @@
     }
   }
 
-  function layoutGraph(nodes: NodeRecord[], rootIds: string[]) {
-    const nodeById = new Map(nodes.map((node) => [node.id, node]));
-    const roots = rootIds.filter((id) => !nodeById.get(id)?.parentId);
-    const rootList = roots.length ? roots : rootIds;
+  function layoutGraph(
+    nodes: NodeRecord[],
+    edges: EdgeRecord[],
+    direction: string,
+  ) {
+    const g = new dagre.graphlib.Graph();
 
-    const placeNode = (node: NodeRecord, depth: number, y: number) => {
-      node.x = depth * 240 + 260;
-      node.y = y;
-
-      if (!node.children.length) {
-        return;
-      }
-
-      const childSpacing = 190;
-      const startY = y - ((node.children.length - 1) * childSpacing) / 2;
-      node.children.forEach((childId, index) => {
-        const child = nodeById.get(childId);
-        if (!child) {
-          return;
-        }
-        placeNode(child, depth + 1, startY + index * childSpacing);
-      });
-    };
-
-    if (!nodes.length) {
-      return;
-    }
-
-    const startY = 220;
-    const verticalGap = 220;
-    rootList.forEach((id, index) => {
-      const rootNode = nodeById.get(id);
-      if (!rootNode) {
-        return;
-      }
-      placeNode(rootNode, 1, startY + index * verticalGap);
+    g.setGraph({
+      rankdir: direction,
+      ranksep: 120,
+      nodesep: 60,
+      marginx: 80,
+      marginy: 80,
     });
 
-    const firstNode = nodes[0];
-    firstNode.x = 260;
-    firstNode.y = 220;
+    g.setDefaultEdgeLabel(() => ({}));
+
+    for (const node of nodes) {
+      g.setNode(node.id, {
+        width: 148,
+        height: 68,
+      });
+    }
+
+    for (const edge of edges) {
+      g.setEdge(edge.from, edge.to);
+    }
+
+    dagre.layout(g);
+
+    for (const node of nodes) {
+      const pos = g.node(node.id);
+
+      if (!pos) continue;
+
+      node.x = pos.x;
+      node.y = pos.y;
+    }
+
+    for (const edge of edges) {
+      const layout = g.edge(edge.from, edge.to);
+
+      if (!layout) continue;
+
+      edge.points = layout.points;
+    }
   }
 
   function getVisibleNodeIds(): string[] {
@@ -367,7 +402,7 @@
       Math.abs(viewTarget.scale - view.scale) < 0.001
     ) {
       view = { ...viewTarget };
-      cancelAnimationFrame(animationFrame);
+      // cancelAnimationFrame(animationFrame);
       animationFrame = 0;
       return;
     }
@@ -377,7 +412,9 @@
 
   function beginAnimation() {
     if (animationFrame) {
-      cancelAnimationFrame(animationFrame);
+      /* avoid restarting animation constantly on long key presses */
+      // cancelAnimationFrame(animationFrame);
+      return;
     }
     animationFrame = requestAnimationFrame(animateView);
   }
@@ -437,53 +474,88 @@
 
     if (worldMode) {
       const stride = moveScale * (speed === 10 ? 3 : speed === 5 ? 2 : 1);
-      const delta =
-        direction === "left" ? -stride : direction === "right" ? stride : 0;
-      const verticalDelta =
-        direction === "up" ? -stride : direction === "down" ? stride : 0;
+
       viewTarget = {
-        x: viewTarget.x + delta,
-        y: viewTarget.y + verticalDelta,
+        x:
+          viewTarget.x +
+          (direction === "left" ? -stride : direction === "right" ? stride : 0),
+        y:
+          viewTarget.y +
+          (direction === "up" ? -stride : direction === "down" ? stride : 0),
         scale: viewTarget.scale,
       };
+
       beginAnimation();
       return;
     }
 
-    const candidateIds = node.neighbors.length ? node.neighbors : [node.id];
-    if (direction === "left" && node.parentId) {
-      focusNode(node.parentId);
-      statusText = `Moved to parent ${node.parentId}`;
+    // LEFT = first parent
+    if (direction === "left") {
+      if (node.parentId) {
+        focusNode(node.parentId);
+        statusText = `Moved to parent ${node.parentId}`;
+      }
       return;
     }
 
-    if (direction === "right" && node.children.length) {
-      focusNode(node.children[0]);
-      statusText = `Moved to child ${node.children[0]}`;
+    // RIGHT = first child
+    if (direction === "right") {
+      if (node.children.length) {
+        focusNode(node.children[0]);
+        statusText = `Moved to child ${node.children[0]}`;
+      }
       return;
     }
 
-    const currentIndex = candidateIds.indexOf(currentNodeId);
-    const step = speed;
-    const safeIndex = currentIndex >= 0 ? currentIndex : 0;
-    let nextIndex = safeIndex;
-    if (direction === "up") {
-      nextIndex =
-        (safeIndex - step + candidateIds.length) % candidateIds.length;
-    } else if (direction === "down") {
-      nextIndex = (safeIndex + step) % candidateIds.length;
-    }
+    // ---------- UP / DOWN ----------
+    // Traverse siblings (nodes with the same parent)
 
-    const nextNodeId = candidateIds[nextIndex] ?? node.id;
-    if (nextNodeId && nextNodeId !== currentNodeId) {
-      focusNode(nextNodeId);
-      statusText = `Moved to neighbor ${nextNodeId}`;
-    }
+    const siblings = graph.nodes
+      .filter((n) => n.parentId === node.parentId)
+      .sort((a, b) => {
+        // Dagre position determines visual order.
+        // LR: compare Y
+        // TB: compare X
+
+        const horizontal = Math.abs(a.x - b.x) > Math.abs(a.y - b.y);
+
+        return horizontal ? a.y - b.y : a.x - b.x;
+      });
+
+    if (siblings.length <= 1) return;
+
+    const index = siblings.findIndex((n) => n.id === node.id);
+    if (index === -1) return;
+
+    const nextIndex =
+      direction === "up"
+        ? (index - 1 + siblings.length) % siblings.length
+        : (index + 1) % siblings.length;
+
+    focusNode(siblings[nextIndex].id);
+
+    statusText = `Moved to ${siblings[nextIndex].label}`;
   }
 
   function zoomBy(delta: number) {
-    const nextScale = Math.min(2.6, Math.max(0.6, viewTarget.scale + delta));
-    viewTarget = { ...viewTarget, scale: nextScale };
+    const oldScale = viewTarget.scale;
+    const newScale = Math.min(2.6, Math.max(0.6, oldScale + delta));
+
+    if (oldScale === newScale) return;
+
+    const cx = fieldSize.width / 2;
+    const cy = fieldSize.height / 2;
+
+    // World position currently under the screen center
+    const worldX = (cx - viewTarget.x) / oldScale;
+    const worldY = (cy - viewTarget.y) / oldScale;
+
+    viewTarget = {
+      scale: newScale,
+      x: cx - worldX * newScale,
+      y: cy - worldY * newScale,
+    };
+
     beginAnimation();
   }
 
@@ -715,10 +787,10 @@
         y: viewTarget.y + event.deltaX * 0.45,
         scale: viewTarget.scale,
       };
+      beginAnimation();
     } else {
       zoomBy(event.deltaY > 0 ? -0.08 : 0.08);
     }
-    beginAnimation();
   }
 
   function startDrag(event: PointerEvent) {
@@ -805,6 +877,8 @@
       if (event.key === "Enter") {
         event.preventDefault();
         jumpToSearch();
+        const target = event.target as HTMLElement | null;
+        target?.blur();
       }
     }}
     onEditClick={beginEditing}

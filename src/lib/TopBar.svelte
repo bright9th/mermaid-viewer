@@ -42,6 +42,7 @@
 
   .topbar-title {
     flex: 1;
+    font-size: small;
     user-select: none;
   }
 
