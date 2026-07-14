@@ -474,48 +474,67 @@
 
     if (worldMode) {
       const stride = moveScale * (speed === 10 ? 3 : speed === 5 ? 2 : 1);
-      const delta =
-        direction === "left" ? stride : direction === "right" ? -stride : 0;
-      const verticalDelta =
-        direction === "up" ? stride : direction === "down" ? -stride : 0;
+
       viewTarget = {
-        x: viewTarget.x + delta,
-        y: viewTarget.y + verticalDelta,
+        x:
+          viewTarget.x +
+          (direction === "left" ? -stride : direction === "right" ? stride : 0),
+        y:
+          viewTarget.y +
+          (direction === "up" ? -stride : direction === "down" ? stride : 0),
         scale: viewTarget.scale,
       };
+
       beginAnimation();
       return;
     }
 
-    const candidateIds = node.neighbors.length ? node.neighbors : [node.id];
-    if (direction === "left" && node.parentId) {
-      focusNode(node.parentId);
-      statusText = `Moved to parent ${node.parentId}`;
+    // LEFT = first parent
+    if (direction === "left") {
+      if (node.parentId) {
+        focusNode(node.parentId);
+        statusText = `Moved to parent ${node.parentId}`;
+      }
       return;
     }
 
-    if (direction === "right" && node.children.length) {
-      focusNode(node.children[0]);
-      statusText = `Moved to child ${node.children[0]}`;
+    // RIGHT = first child
+    if (direction === "right") {
+      if (node.children.length) {
+        focusNode(node.children[0]);
+        statusText = `Moved to child ${node.children[0]}`;
+      }
       return;
     }
 
-    const currentIndex = candidateIds.indexOf(currentNodeId);
-    const step = speed;
-    const safeIndex = currentIndex >= 0 ? currentIndex : 0;
-    let nextIndex = safeIndex;
-    if (direction === "up") {
-      nextIndex =
-        (safeIndex - step + candidateIds.length) % candidateIds.length;
-    } else if (direction === "down") {
-      nextIndex = (safeIndex + step) % candidateIds.length;
-    }
+    // ---------- UP / DOWN ----------
+    // Traverse siblings (nodes with the same parent)
 
-    const nextNodeId = candidateIds[nextIndex] ?? node.id;
-    if (nextNodeId && nextNodeId !== currentNodeId) {
-      focusNode(nextNodeId);
-      statusText = `Moved to neighbor ${nextNodeId}`;
-    }
+    const siblings = graph.nodes
+      .filter((n) => n.parentId === node.parentId)
+      .sort((a, b) => {
+        // Dagre position determines visual order.
+        // LR: compare Y
+        // TB: compare X
+
+        const horizontal = Math.abs(a.x - b.x) > Math.abs(a.y - b.y);
+
+        return horizontal ? a.y - b.y : a.x - b.x;
+      });
+
+    if (siblings.length <= 1) return;
+
+    const index = siblings.findIndex((n) => n.id === node.id);
+    if (index === -1) return;
+
+    const nextIndex =
+      direction === "up"
+        ? (index - 1 + siblings.length) % siblings.length
+        : (index + 1) % siblings.length;
+
+    focusNode(siblings[nextIndex].id);
+
+    statusText = `Moved to ${siblings[nextIndex].label}`;
   }
 
   function zoomBy(delta: number) {
