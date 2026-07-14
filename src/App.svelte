@@ -46,7 +46,7 @@
   } | null = null;
 
   const fieldSize = { width: 1400, height: 900 };
-  const moveScale = 140;
+  const moveScale = 20;
 
   function extractMermaidSource(source: string): string | null {
     const normalized = source.replace(/\r\n/g, "\n");
@@ -402,7 +402,7 @@
       Math.abs(viewTarget.scale - view.scale) < 0.001
     ) {
       view = { ...viewTarget };
-      cancelAnimationFrame(animationFrame);
+      // cancelAnimationFrame(animationFrame);
       animationFrame = 0;
       return;
     }
@@ -412,7 +412,9 @@
 
   function beginAnimation() {
     if (animationFrame) {
-      cancelAnimationFrame(animationFrame);
+      /* avoid restarting animation constantly on long key presses */
+      // cancelAnimationFrame(animationFrame);
+      return;
     }
     animationFrame = requestAnimationFrame(animateView);
   }
@@ -473,9 +475,9 @@
     if (worldMode) {
       const stride = moveScale * (speed === 10 ? 3 : speed === 5 ? 2 : 1);
       const delta =
-        direction === "left" ? -stride : direction === "right" ? stride : 0;
+        direction === "left" ? stride : direction === "right" ? -stride : 0;
       const verticalDelta =
-        direction === "up" ? -stride : direction === "down" ? stride : 0;
+        direction === "up" ? stride : direction === "down" ? -stride : 0;
       viewTarget = {
         x: viewTarget.x + delta,
         y: viewTarget.y + verticalDelta,
